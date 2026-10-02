@@ -1,3 +1,5 @@
+import mesaService from './mesaService';
+
 const STORAGE_KEY = "lys_pedidos";
 
 function inicializar() {
@@ -56,18 +58,7 @@ function marcarComoPagado(id, dataPago) {
   const pedidoPagado = actualizados.find((p) => p.id === id);
   if (pedidoPagado && pedidoPagado.mesa) {
     try {
-      const rawMesas = localStorage.getItem("lys_mesas");
-      if (rawMesas) {
-        const mesas = JSON.parse(rawMesas);
-        const mesaNum = String(pedidoPagado.mesa).padStart(2, "0");
-        const mesasActualizadas = mesas.map((m) =>
-          String(m.numero).padStart(2, "0") === mesaNum
-            ? { ...m, estado: "libre", pedidoId: null, inicioAt: null, totalAcumulado: 0 }
-            : m
-        );
-        localStorage.setItem("lys_mesas", JSON.stringify(mesasActualizadas));
-        window.dispatchEvent(new Event("lys_mesas_updated"));
-      }
+      mesaService.liberarMesa(pedidoPagado.mesa);
     } catch (e) {
       console.error("Error al liberar mesa tras pago:", e);
     }
