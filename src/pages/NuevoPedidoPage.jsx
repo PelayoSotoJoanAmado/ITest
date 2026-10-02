@@ -78,26 +78,31 @@ function NuevoPedidoForm({ numeroNormalizado }) {
     }
   });
 
+  const [pedidoActivoId, setPedidoActivoId] = useState(() => mesaActual?.pedidoId || null);
+
   // SCRUM-279: Cargar pedido activo desde InsForge PostgreSQL si la mesa ya tiene orden
   useEffect(() => {
     async function cargarPedidoDesdeInsForge() {
-      if (!mesaActual?.pedidoId) return;
       try {
         const { data, error } = await insforge.database
           .from('pedidos')
           .select('*')
-          .eq('id', mesaActual.pedidoId)
-          .maybeSingle();
+          .eq('mesa_numero', numeroNormalizado)
+          .neq('estado', 'pagado')
+          .neq('estado', 'cancelado')
+          .limit(1);
 
-        if (!error && data) {
-          if (Array.isArray(data.items) && data.items.length > 0) {
-            setItemsComanda(data.items);
+        if (!error && data && data.length > 0) {
+          const pedidoActivo = data[0];
+          setPedidoActivoId(pedidoActivo.id);
+          if (Array.isArray(pedidoActivo.items) && pedidoActivo.items.length > 0) {
+            setItemsComanda(pedidoActivo.items);
           }
-          if (data.observaciones) {
-            setObservaciones(data.observaciones);
+          if (pedidoActivo.observaciones) {
+            setObservaciones(pedidoActivo.observaciones);
           }
-          if (data.comensales) {
-            setComensales(data.comensales);
+          if (pedidoActivo.comensales) {
+            setComensales(pedidoActivo.comensales);
           }
         }
       } catch (err) {
@@ -105,7 +110,7 @@ function NuevoPedidoForm({ numeroNormalizado }) {
       }
     }
     cargarPedidoDesdeInsForge();
-  }, [mesaActual?.pedidoId]);
+  }, [numeroNormalizado]);
 
   const [meseraNombre] = useState(() => {
     const usuario = authService.getCurrentUser();
@@ -215,7 +220,7 @@ function NuevoPedidoForm({ numeroNormalizado }) {
     }
 
     try {
-      const pedidoExistenteId = mesaActual?.pedidoId;
+      const pedidoExistenteId = pedidoActivoId || mesaActual?.pedidoId;
       const itemsFormateados = itemsComanda.map((it) => ({
         id: it.id,
         nombre: it.nombre,

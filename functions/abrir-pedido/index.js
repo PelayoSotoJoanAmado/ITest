@@ -52,8 +52,28 @@ export default async function(req) {
 
     const mesa = mesas[0];
 
-    // SCRUM-282: Impedir dos pedidos activos simultáneos en una misma mesa
-    if (mesa.estado === 'ocupada' && mesa.pedido_id && (!pedidoId || mesa.pedido_id !== pedidoId)) {
+    // SCRUM-279: Si la mesa ya tiene un pedido activo, reutilizarlo para agregar ítems/observaciones
+    let idFinal = pedidoId || mesa.pedido_id;
+
+    if (!idFinal) {
+      // Consultar si hay orden activa previa no pagada
+      const { data: pedidosActivos } = await client.database
+        .from('pedidos')
+        .select('id')
+        .eq('mesa_numero', numNormalizado)
+        .neq('estado', 'pagado')
+        .neq('estado', 'cancelado')
+        .limit(1);
+
+      if (pedidosActivos && pedidosActivos.length > 0) {
+        idFinal = pedidosActivos[0].id;
+      } else {
+        idFinal = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+    }
+
+    // SCRUM-282: Impedir dos pedidos activos distintos en la misma mesa
+    if (mesa.estado === 'ocupada' && mesa.pedido_id && idFinal !== mesa.pedido_id) {
       return new Response(JSON.stringify({
         error: `La mesa ${numNormalizado} ya se encuentra ocupada con el pedido activo ${mesa.pedido_id}.`
       }), {
@@ -61,8 +81,6 @@ export default async function(req) {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
-
-    const idFinal = pedidoId || `PED-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const { error: pedidoErr } = await client.database
       .from('pedidos')
@@ -120,7 +138,7 @@ export default async function(req) {
     return new Response(JSON.stringify({
       success: true,
       pedidoId: idFinal,
-      mensaje: 'Pedido abierto y mesa ocupada con éxito'
+      mensaje: 'Pedido guardado y mesa sincronizada con éxito'
     }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

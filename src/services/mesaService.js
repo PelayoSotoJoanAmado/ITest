@@ -126,10 +126,13 @@ export async function abrirPedidoMesa({
   pedidoId = null,
 }) {
   const numNormalizado = String(numero).padStart(2, '0');
-
-  // Validación previa local para retroalimentación instantánea
   const mesaActual = getMesaByNumero(numNormalizado);
-  if (mesaActual && mesaActual.estado === ESTADOS_MESA.OCUPADA && mesaActual.pedidoId && (!pedidoId || mesaActual.pedidoId !== pedidoId)) {
+
+  // SCRUM-279: Si la mesa ya tiene pedido activo y no se pasó pedidoId, reutilizarlo
+  const idPedidoObjetivo = pedidoId || mesaActual?.pedidoId || null;
+
+  // SCRUM-282: Impedir dos pedidos activos distintos en la misma mesa
+  if (mesaActual && mesaActual.estado === ESTADOS_MESA.OCUPADA && mesaActual.pedidoId && idPedidoObjetivo && idPedidoObjetivo !== mesaActual.pedidoId) {
     throw new Error(`La mesa ${numNormalizado} ya se encuentra ocupada con el pedido ${mesaActual.pedidoId}. No se pueden tener dos pedidos activos simultáneos.`);
   }
 
@@ -145,7 +148,7 @@ export async function abrirPedidoMesa({
         subtotal,
         igv,
         total,
-        pedidoId,
+        pedidoId: idPedidoObjetivo,
       },
     });
 
@@ -163,8 +166,23 @@ export async function abrirPedidoMesa({
   } catch (funcErr) {
     console.warn('Fallback a operación directa en PostgreSQL:', funcErr.message);
 
-    // Fallback: Ejecución directa en PostgreSQL mediante PostgREST si la función no responde
-    const idFinal = pedidoId || `PED-${Date.now().toString().slice(-4)}`;
+    // Fallback: Ejecución directa en PostgreSQL mediante PostgREST
+    let idFinal = idPedidoObjetivo;
+    if (!idFinal) {
+      const { data: pedidosActivos } = await insforge.database
+        .from('pedidos')
+        .select('id')
+        .eq('mesa_numero', numNormalizado)
+        .neq('estado', 'pagado')
+        .neq('estado', 'cancelado')
+        .limit(1);
+
+      if (pedidosActivos && pedidosActivos.length > 0) {
+        idFinal = pedidosActivos[0].id;
+      } else {
+        idFinal = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+    }
 
     const { error: errPedido } = await insforge.database
       .from('pedidos')
