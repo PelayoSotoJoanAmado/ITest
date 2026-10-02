@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Users,
@@ -19,6 +19,7 @@ import {
 import { PRODUCTS } from '../data/products';
 import mesaService from '../services/mesaService';
 import authService from '../services/authService';
+import insforge from '../lib/insforge';
 import '../styles/nuevoPedido.css';
 
 const CATEGORIAS_MENU = [
@@ -76,6 +77,35 @@ function NuevoPedidoForm({ numeroNormalizado }) {
       return null;
     }
   });
+
+  // SCRUM-279: Cargar pedido activo desde InsForge PostgreSQL si la mesa ya tiene orden
+  useEffect(() => {
+    async function cargarPedidoDesdeInsForge() {
+      if (!mesaActual?.pedidoId) return;
+      try {
+        const { data, error } = await insforge.database
+          .from('pedidos')
+          .select('*')
+          .eq('id', mesaActual.pedidoId)
+          .maybeSingle();
+
+        if (!error && data) {
+          if (Array.isArray(data.items) && data.items.length > 0) {
+            setItemsComanda(data.items);
+          }
+          if (data.observaciones) {
+            setObservaciones(data.observaciones);
+          }
+          if (data.comensales) {
+            setComensales(data.comensales);
+          }
+        }
+      } catch (err) {
+        console.error('Error al sincronizar pedido activo desde InsForge:', err);
+      }
+    }
+    cargarPedidoDesdeInsForge();
+  }, [mesaActual?.pedidoId]);
 
   const [meseraNombre] = useState(() => {
     const usuario = authService.getCurrentUser();
@@ -178,76 +208,75 @@ function NuevoPedidoForm({ numeroNormalizado }) {
     setBorradorPendiente(null);
   }
 
-  function handleEnviarCocina() {
+  async function handleEnviarCocina() {
     if (itemsComanda.length === 0) {
       alert('La comanda está vacía. Selecciona al menos un producto.');
       return;
     }
 
     try {
-      const rawPedidos = localStorage.getItem('lys_pedidos');
-      const pedidos = rawPedidos ? JSON.parse(rawPedidos) : [];
-
-      // Si ya existía un pedido de esta mesa se actualiza, si no, se crea uno nuevo
       const pedidoExistenteId = mesaActual?.pedidoId;
-      const nuevoId = pedidoExistenteId || `PED-${1000 + pedidos.length + 1}`;
+      const itemsFormateados = itemsComanda.map((it) => ({
+        id: it.id,
+        nombre: it.nombre,
+        imagen: it.imagen || '',
+        cantidad: it.cantidad,
+        precio: it.precio,
+        observacion: it.observacion || '',
+      }));
 
-      const nuevoPedido = {
-        id: nuevoId,
-        mesa: Number(numeroNormalizado),
-        cliente: `Mesa ${numeroNormalizado}`,
+      // SCRUM-276, SCRUM-278, SCRUM-279, SCRUM-280, SCRUM-282, SCRUM-283
+      // Abrir o actualizar pedido en PostgreSQL a través de la función de servidor
+      await mesaService.abrirPedidoMesa({
+        numero: numeroNormalizado,
         mesera: meseraNombre,
         comensales: Number(comensales),
-        estadoCocina: 'nuevo', // Notifica a cocina
-        estado: 'pendiente',   // Notifica a caja
         observaciones: observaciones.trim(),
-        items: itemsComanda.map((it) => ({
-          id: it.id,
-          nombre: it.nombre,
-          imagen: it.imagen,
-          cantidad: it.cantidad,
-          precio: it.precio,
-          observacion: '',
-        })),
+        items: itemsFormateados,
         subtotal: Number(subtotal.toFixed(2)),
         igv: Number(igv.toFixed(2)),
         total: Number(total.toFixed(2)),
-        createdAt: new Date().toISOString(),
-      };
-
-      let pedidosActualizados;
-      if (pedidoExistenteId) {
-        pedidosActualizados = pedidos.map((p) => (p.id === pedidoExistenteId ? nuevoPedido : p));
-      } else {
-        pedidosActualizados = [...pedidos, nuevoPedido];
-      }
-
-      localStorage.setItem('lys_pedidos', JSON.stringify(pedidosActualizados));
+        pedidoId: pedidoExistenteId,
+      });
 
       // Limpiar cualquier borrador pendiente de esta mesa
       localStorage.removeItem(`lys_borrador_mesa_${numeroNormalizado}`);
 
-      // Actualizar mesa a ocupada
-      mesaService.ocuparMesa(numeroNormalizado, nuevoId, total);
+      // Sincronizar cache local de pedidos para retrocompatibilidad con Cocina y Caja
+      try {
+        const rawPedidos = localStorage.getItem('lys_pedidos');
+        const pedidos = rawPedidos ? JSON.parse(rawPedidos) : [];
+        const nuevoId = pedidoExistenteId || `PED-${1000 + pedidos.length + 1}`;
+        const nuevoPedido = {
+          id: nuevoId,
+          mesa: Number(numeroNormalizado),
+          cliente: `Mesa ${numeroNormalizado}`,
+          mesera: meseraNombre,
+          comensales: Number(comensales),
+          estadoCocina: 'nuevo',
+          estado: 'pendiente',
+          observaciones: observaciones.trim(),
+          items: itemsFormateados,
+          subtotal: Number(subtotal.toFixed(2)),
+          igv: Number(igv.toFixed(2)),
+          total: Number(total.toFixed(2)),
+          createdAt: new Date().toISOString(),
+        };
 
-      // Registrar actividad
-      mesaService.registrarActividad({
-        mesaNumero: numeroNormalizado,
-        tipo: 'pedido_creado',
-        titulo: `Mesa ${numeroNormalizado}`,
-        descripcion: pedidoExistenteId ? 'Comanda actualizada y enviada a cocina' : 'Nuevo pedido enviado a cocina',
-        ordenCodigo: `Orden #${nuevoId}`,
-        tipoColor: 'rojo',
-      });
+        const pedidosActualizados = pedidoExistenteId
+          ? pedidos.map((p) => (p.id === pedidoExistenteId ? nuevoPedido : p))
+          : [...pedidos, nuevoPedido];
 
-      // Disparar storage para sincronizar panel de cocina y mesas
-      window.dispatchEvent(new Event('storage'));
+        localStorage.setItem('lys_pedidos', JSON.stringify(pedidosActualizados));
+        window.dispatchEvent(new Event('storage'));
+        window.dispatchEvent(new CustomEvent('lys_pedidos_updated'));
+      } catch {}
 
       alert(`¡Pedido de Mesa ${numeroNormalizado} enviado a Cocina con éxito!`);
       navigate('/mesas');
     } catch (err) {
       console.error('Error al enviar a cocina:', err);
-      alert('Ocurrió un error al enviar el pedido a cocina.');
+      alert(err.message || 'Ocurrió un error al enviar el pedido a cocina.');
     }
   }
 

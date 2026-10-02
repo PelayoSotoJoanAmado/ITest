@@ -54,50 +54,22 @@ export default function MesaDetalleModal({ mesa, onClose, onMesaUpdated }) {
     onClose();
   }
 
-  function handleLiberarMesa() {
+  async function handleLiberarMesa() {
     if (window.confirm(`¿Confirmas liberar la Mesa ${numero}?`)) {
-      mesaService.liberarMesa(numero);
-      mesaService.registrarActividad({
-        mesaNumero: numero,
-        tipo: 'pedido_completado',
-        titulo: `Mesa ${numero}`,
-        descripcion: 'Mesa liberada',
-        ordenCodigo: mesa.pedidoId ? `Orden ${mesa.pedidoId}` : '',
-        tipoColor: 'verde',
-      });
+      await mesaService.liberarMesa(numero);
       if (onMesaUpdated) onMesaUpdated();
       onClose();
     }
   }
 
-  function handleSolicitarCuenta() {
-    if (mesa.pedidoId) {
-      try {
-        const raw = localStorage.getItem('lys_pedidos');
-        const pedidos = raw ? JSON.parse(raw) : [];
-        const actualizados = pedidos.map((p) => {
-          if (p.id === mesa.pedidoId) {
-            return { ...p, cuentaSolicitada: true };
-          }
-          return p;
-        });
-        localStorage.setItem('lys_pedidos', JSON.stringify(actualizados));
-        window.dispatchEvent(new Event('storage'));
-      } catch (err) {
-        console.error(err);
-      }
+  async function handleSolicitarCuenta() {
+    try {
+      await mesaService.solicitarCuentaMesa(numero);
+      alert(`Se ha solicitado la cuenta de la Mesa ${numero} para Caja.`);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Error al solicitar cuenta');
     }
-
-    mesaService.registrarActividad({
-      mesaNumero: numero,
-      tipo: 'pedido_actualizado',
-      titulo: `Mesa ${numero}`,
-      descripcion: 'Cuenta solicitada a caja',
-      ordenCodigo: mesa.pedidoId || '',
-      tipoColor: 'amarillo',
-    });
-
-    alert(`Se ha solicitado la cuenta de la Mesa ${numero} para Caja.`);
     if (onMesaUpdated) onMesaUpdated();
     onClose();
   }
