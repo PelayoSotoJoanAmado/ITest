@@ -5,13 +5,29 @@ export default function useMesas(zona = 'salon_principal') {
   const [listaCompleta, setListaCompleta] = useState(() => mesaService.getMesas());
   const [actividades, setActividades] = useState(() => mesaService.getActividades());
 
-  const recargar = useCallback(() => {
+  const recargar = useCallback(async () => {
+    // 1. Cargar estado actual de caché de inmediato
     setListaCompleta(mesaService.getMesas());
     setActividades(mesaService.getActividades());
+
+    // 2. Sincronizar en segundo plano con PostgreSQL en InsForge
+    try {
+      const [mesasRemotas, actsRemotas] = await Promise.all([
+        mesaService.fetchMesas(),
+        mesaService.fetchActividades(),
+      ]);
+      if (mesasRemotas) setListaCompleta(mesasRemotas);
+      if (actsRemotas) setActividades(actsRemotas);
+    } catch (err) {
+      console.warn('Error al sincronizar mesas remotas:', err);
+    }
   }, []);
 
   useEffect(() => {
-    // Polling cada 5 segundos para mantener sincronizados consumos y tiempos en vivo
+    // Sincronización inicial con PostgreSQL
+    recargar();
+
+    // Polling cada 5 segundos para mantener sincronizados consumos y estados en vivo
     const timer = setInterval(recargar, 5000);
 
     function onStorageEvent(e) {
@@ -62,12 +78,12 @@ export default function useMesas(zona = 'salon_principal') {
     estadisticas,
     actividades,
     recargar,
-    liberarMesa: (numero) => {
-      mesaService.liberarMesa(numero);
+    liberarMesa: async (numero) => {
+      await mesaService.liberarMesa(numero);
       recargar();
     },
-    ocuparMesa: (numero, pedidoId, total) => {
-      mesaService.ocuparMesa(numero, pedidoId, total);
+    ocuparMesa: async (numero, pedidoId, total) => {
+      await mesaService.abrirPedidoMesa({ numero, pedidoId, total });
       recargar();
     },
   };
